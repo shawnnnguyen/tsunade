@@ -1,6 +1,6 @@
 # Tsunade
 
-Personal finance and wealth management web app: transaction ledger (via Plaid or manual CSV
+Personal finance and wealth management web app: transaction ledger (via Enable Banking or manual CSV
 import), automatic categorization, manual and market-based asset valuations, and
 net-worth/cash-flow analytics. Delivered as a managed cloud service — no self-hosted option.
 See `docs/architecture.md` for the full design and `docs/user-stories.md` for the product scope.
@@ -13,7 +13,7 @@ workspaces. Deployed to Azure via Terraform; Docker Compose is for local dev onl
 
 - `apps/api` — Express backend: routes, controllers, request/response schemas. Implemented so
   far: a `/health` check only.
-- `apps/worker` — BullMQ worker: Plaid syncs, market-data polling, categorization backfill. Not
+- `apps/worker` — BullMQ worker: Enable Banking syncs, market-data polling, categorization backfill. Not
   yet created.
 - `apps/web` — React SPA. Not yet created.
 - `packages/db` — Drizzle schema, migrations, shared DB client (imported by `api` + `worker`).
@@ -64,7 +64,7 @@ Use `.github/ISSUE_TEMPLATE/` for issues, `.github/PULL_REQUEST_TEMPLATE.md` for
 - Every resource other than `User` is scoped by `userId` (multi-user, JWT auth) — every
   query/write must filter by the authenticated user; never let one user's data leak into another's
   response.
-- External API credentials (Plaid, market data, exchange rate) are never committed — `.env` only;
+- External API credentials (Enable Banking, Finnhub, exchangerate.host) are never committed — `.env` only;
   adapters read from environment and fall back to fixtures when unset.
 - No self-hosted deployment path. Azure (via `infra/`) is the only supported deployment target;
   Docker Compose exists for local development only, not as a user-facing option.

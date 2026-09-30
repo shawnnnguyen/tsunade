@@ -5,7 +5,7 @@
 ### 1.1 Automated Bank Syncing
 
 As a user, I want to securely connect my external bank accounts via a third-party aggregator
-(like Plaid), so that my balances and transactions are automatically imported without manual
+(like Enable Banking), so that my balances and transactions are automatically imported without manual
 entry.
 
 **Acceptance criteria**
