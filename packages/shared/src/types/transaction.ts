@@ -8,6 +8,7 @@ export interface Transaction {
   date: string;
   description: string;
   cleanedDescription: string | null;
+  merchant: string | null;
   amount: string;
   currency: string;
   source: TransactionSource;

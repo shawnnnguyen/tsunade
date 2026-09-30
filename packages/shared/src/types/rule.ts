@@ -1,4 +1,4 @@
-export type RuleMatchField = 'description' | 'amount';
+export type RuleMatchField = 'description' | 'amount' | 'merchant';
 
 export interface Rule {
   id: string;

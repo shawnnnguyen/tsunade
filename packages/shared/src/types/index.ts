@@ -7,3 +7,4 @@ export * from './holding.js';
 export * from './valuation-snapshot.js';
 export * from './asset.js';
 export * from './asset-value-log.js';
+export * from './tag.js';
