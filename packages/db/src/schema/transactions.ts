@@ -18,6 +18,7 @@ export const transactions = pgTable('transactions', {
   date: date().notNull(),
   description: text().notNull(),
   cleanedDescription: text(),
+  merchant: text(),
   amount: numeric({ precision: 19, scale: 4 }).notNull(),
   currency: text().notNull(),
   source: transactionSourceEnum().notNull(),

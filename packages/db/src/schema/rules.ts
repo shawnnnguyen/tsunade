@@ -3,7 +3,7 @@ import { pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { categories } from './categories.js';
 import { users } from './users.js';
 
-export const ruleMatchFieldEnum = pgEnum('rule_match_field', ['description', 'amount']);
+export const ruleMatchFieldEnum = pgEnum('rule_match_field', ['description', 'amount', 'merchant']);
 
 export const rules = pgTable('rules', {
   id: uuid().primaryKey().defaultRandom(),

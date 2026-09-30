@@ -8,3 +8,5 @@ export * from './holdings.js';
 export * from './valuation-snapshots.js';
 export * from './assets.js';
 export * from './asset-value-logs.js';
+export * from './tags.js';
+export * from './transaction-tags.js';
