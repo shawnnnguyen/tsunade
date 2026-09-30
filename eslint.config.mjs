@@ -12,8 +12,6 @@ export default tseslint.config(
   importX.flatConfigs.recommended,
   importX.flatConfigs.typescript,
   {
-    // Common default-export-as-namespace pattern (typescript-eslint, eslint-plugin-import-x
-    // themselves use it) trips these rules with false positives.
     rules: {
       'import-x/no-named-as-default': 'off',
       'import-x/no-named-as-default-member': 'off',
@@ -46,6 +44,17 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-return': 'error',
       '@typescript-eslint/no-unsafe-type-assertion': 'error',
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'FunctionDeclaration',
+          message: 'Use an arrow function instead of a function declaration.',
+        },
+        {
+          selector: 'FunctionExpression',
+          message: 'Use an arrow function instead of a function expression.',
+        },
+      ],
     },
   },
   {
