@@ -2,6 +2,7 @@ import { db, refreshTokens, users } from '@tsunade/db';
 import { eq } from 'drizzle-orm';
 import { Router, type Response } from 'express';
 
+import { isRecord } from '../lib/is-record.js';
 import { clearAuthCookies, getCookie, setAuthCookies } from './cookies.js';
 import { requireAuth } from './middleware.js';
 import { hashPassword, verifyPassword } from './passwords.js';
@@ -13,9 +14,6 @@ interface Credentials {
   email: string;
   password: string;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
 
 const parseCredentials = (body: unknown): Credentials | null => {
   if (!isRecord(body)) {
