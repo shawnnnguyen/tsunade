@@ -3,6 +3,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import { sql } from 'drizzle-orm';
 import express from 'express';
+import 'express-async-errors';
 
 import { accountsRouter } from './accounts/router.js';
 import { assetsRouter } from './assets/router.js';
@@ -33,6 +34,14 @@ app.use('/holdings', holdingsRouter);
 app.use('/assets', assetsRouter);
 app.use('/tags', tagsRouter);
 app.use('/transactions', transactionsRouter);
+
+app.use(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error(err);
+    res.status(500).json({ error: 'internal server error' });
+  },
+);
 
 app.listen(port, () => {
   console.log(`api listening on port ${String(port)}`);
