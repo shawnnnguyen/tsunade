@@ -69,48 +69,6 @@ tagsRouter.get('/:id', async (req, res) => {
   res.json(tag);
 });
 
-tagsRouter.patch('/:id', async (req, res) => {
-  const existing = await findOwned(
-    (args) => db.query.tags.findFirst(args),
-    tags.id,
-    tags.userId,
-    req.params.id,
-    getUserId(req),
-  );
-  if (!existing) {
-    res.status(404).json({ error: 'tag not found' });
-    return;
-  }
-
-  if (!isRecord(req.body)) {
-    res.status(400).json({ error: 'request body must be an object' });
-    return;
-  }
-
-  const patch: Partial<NewTag> = {};
-  if ('name' in req.body) {
-    if (typeof req.body.name !== 'string' || !isNonEmptyString(req.body.name, NAME_MAX_LENGTH)) {
-      res
-        .status(400)
-        .json({ error: `name must be a non-empty string up to ${String(NAME_MAX_LENGTH)} chars` });
-      return;
-    }
-    patch.name = req.body.name.trim();
-  }
-
-  if (Object.keys(patch).length === 0) {
-    res.status(400).json({ error: 'no valid fields to update' });
-    return;
-  }
-
-  const [tag] = await db.update(tags).set(patch).where(eq(tags.id, existing.id)).returning();
-  if (!tag) {
-    res.status(404).json({ error: 'tag not found' });
-    return;
-  }
-  res.json(tag);
-});
-
 tagsRouter.delete('/:id', async (req, res) => {
   const existing = await findOwned(
     (args) => db.query.tags.findFirst(args),
