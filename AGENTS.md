@@ -12,20 +12,27 @@ workspaces. Deployed to Azure via Terraform; Docker Compose is for local dev onl
 ## Repo modules
 
 - `apps/api` — Express backend: routes, controllers, request/response schemas. Implemented so
-  far: a `/health` check only.
+  far: `/health`, full `/auth/*` (register/login/refresh/logout/me), and full CRUD for
+  `accounts`, `categories`, `rules`, `holdings`, `assets` (+ `/assets/:id/value-log`), `tags`, and
+  `transactions` (+ `/transactions/:id/tags`). Not yet built: CSV imports, Enable Banking
+  webhooks, analytics endpoints — see `PLAN.md` phases 2-6.
 - `apps/worker` — BullMQ worker: Enable Banking syncs, market-data polling, categorization backfill. Not
   yet created.
 - `apps/web` — React SPA. Not yet created.
 - `packages/db` — Drizzle schema, migrations, shared DB client (imported by `api` + `worker`).
-  Implemented so far: a `users` table only — `Account`, `Transaction`, `Category`, `Rule`,
-  `Holding`, `ValuationSnapshot`, `Asset`, `AssetValueLog` are all still to be added.
-- `packages/shared` — shared TS types across `api`/`worker`/`web`. Not yet created.
+  All tables from `docs/architecture.md`'s data model exist: `users`, `refresh_tokens`,
+  `accounts`, `categories` (flat, no hierarchy), `rules`, `transactions`, `tags`,
+  `transaction_tags`, `holdings`, `valuation_snapshots`, `assets`, `asset_value_logs`.
+- `packages/shared` — shared TS types, input-validation helpers (`isRecord`, `isNumericString`,
+  `isCurrency`, `isNonEmptyString`, `isWithinNumericBounds`), and adapter interfaces/
+  implementations for `MarketDataAdapter`/`ExchangeRateAdapter` (real + fixture-backed) and
+  `EnableBankingAdapter` (interface/types only — no implementation yet, deliberately not
+  fixture-backed; see `PLAN.md` Phase 2).
 - `infra/` — Terraform for the Azure deployment. Not yet created.
-- `fixtures/` — shared synthetic inputs (transactions/accounts/prices) for adapter stubs and
-  tests.
+- `fixtures/` — synthetic market-data/exchange-rate inputs for adapter stubs and tests.
 - `tests/` — cross-module tests.
-- `docs/` — `architecture.md` and `user-stories.md`; read before any change that touches the data
-  model, API surface, or module boundaries.
+- `docs/` — `architecture.md`, `user-stories.md`, and `to-be-implemented.md`; read before any
+  change that touches the data model, API surface, or module boundaries.
 
 ## Commands
 
