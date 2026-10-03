@@ -17,3 +17,10 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction): vo
     res.status(401).json({ error: 'unauthorized' });
   }
 };
+
+export const getUserId = (req: Request): string => {
+  if (!req.userId) {
+    throw new Error('getUserId called without requireAuth');
+  }
+  return req.userId;
+};

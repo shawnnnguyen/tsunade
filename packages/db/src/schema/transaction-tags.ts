@@ -1,4 +1,4 @@
-import { pgTable, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { index, pgTable, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 import { tags } from './tags.js';
 import { transactions } from './transactions.js';
@@ -13,13 +13,14 @@ export const transactionTags = pgTable(
       .references(() => users.id),
     transactionId: uuid()
       .notNull()
-      .references(() => transactions.id),
+      .references(() => transactions.id, { onDelete: 'cascade' }),
     tagId: uuid()
       .notNull()
-      .references(() => tags.id),
+      .references(() => tags.id, { onDelete: 'cascade' }),
     createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     uniqueIndex('transaction_tags_transaction_tag_unique').on(table.transactionId, table.tagId),
+    index('transaction_tags_user_id_idx').on(table.userId),
   ],
 );

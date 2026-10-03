@@ -1,13 +1,15 @@
 import { db, tags } from '@tsunade/db';
-import { and, eq } from 'drizzle-orm';
+import { isNonEmptyString, isRecord } from '@tsunade/shared';
+import { desc, eq } from 'drizzle-orm';
 import { Router } from 'express';
 
-import { requireAuth } from '../auth/middleware.js';
-import { isRecord } from '../lib/is-record.js';
+import { getUserId } from '../auth/middleware.js';
+import { findOwned } from '../lib/find-owned.js';
+import { parseLimit, parseOffset } from '../lib/pagination.js';
 
 export const tagsRouter = Router();
 
-tagsRouter.use(requireAuth);
+const NAME_MAX_LENGTH = 200;
 
 interface NewTag {
   name: string;
@@ -18,15 +20,19 @@ const parseNewTag = (body: unknown): NewTag | null => {
     return null;
   }
   const { name } = body;
-  if (typeof name !== 'string') {
+  if (typeof name !== 'string' || !isNonEmptyString(name, NAME_MAX_LENGTH)) {
     return null;
   }
-  return { name };
+  return { name: name.trim() };
 };
 
 tagsRouter.get('/', async (req, res) => {
+  const { limit, offset } = req.query;
   const rows = await db.query.tags.findMany({
-    where: eq(tags.userId, req.userId),
+    where: eq(tags.userId, getUserId(req)),
+    orderBy: [desc(tags.createdAt), desc(tags.id)],
+    limit: parseLimit(limit),
+    offset: parseOffset(offset),
   });
   res.json(rows);
 });
@@ -40,7 +46,7 @@ tagsRouter.post('/', async (req, res) => {
 
   const [tag] = await db
     .insert(tags)
-    .values({ ...input, userId: req.userId })
+    .values({ ...input, userId: getUserId(req) })
     .returning();
   if (!tag) {
     throw new Error('failed to create tag');
@@ -49,9 +55,13 @@ tagsRouter.post('/', async (req, res) => {
 });
 
 tagsRouter.get('/:id', async (req, res) => {
-  const tag = await db.query.tags.findFirst({
-    where: and(eq(tags.id, req.params.id), eq(tags.userId, req.userId)),
-  });
+  const tag = await findOwned(
+    (args) => db.query.tags.findFirst(args),
+    tags.id,
+    tags.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!tag) {
     res.status(404).json({ error: 'tag not found' });
     return;
@@ -60,27 +70,55 @@ tagsRouter.get('/:id', async (req, res) => {
 });
 
 tagsRouter.patch('/:id', async (req, res) => {
-  const existing = await db.query.tags.findFirst({
-    where: and(eq(tags.id, req.params.id), eq(tags.userId, req.userId)),
-  });
+  const existing = await findOwned(
+    (args) => db.query.tags.findFirst(args),
+    tags.id,
+    tags.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!existing) {
     res.status(404).json({ error: 'tag not found' });
     return;
   }
 
+  if (!isRecord(req.body)) {
+    res.status(400).json({ error: 'request body must be an object' });
+    return;
+  }
+
   const patch: Partial<NewTag> = {};
-  if (isRecord(req.body) && typeof req.body.name === 'string') {
-    patch.name = req.body.name;
+  if ('name' in req.body) {
+    if (typeof req.body.name !== 'string' || !isNonEmptyString(req.body.name, NAME_MAX_LENGTH)) {
+      res
+        .status(400)
+        .json({ error: `name must be a non-empty string up to ${String(NAME_MAX_LENGTH)} chars` });
+      return;
+    }
+    patch.name = req.body.name.trim();
+  }
+
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({ error: 'no valid fields to update' });
+    return;
   }
 
   const [tag] = await db.update(tags).set(patch).where(eq(tags.id, existing.id)).returning();
+  if (!tag) {
+    res.status(404).json({ error: 'tag not found' });
+    return;
+  }
   res.json(tag);
 });
 
 tagsRouter.delete('/:id', async (req, res) => {
-  const existing = await db.query.tags.findFirst({
-    where: and(eq(tags.id, req.params.id), eq(tags.userId, req.userId)),
-  });
+  const existing = await findOwned(
+    (args) => db.query.tags.findFirst(args),
+    tags.id,
+    tags.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!existing) {
     res.status(404).json({ error: 'tag not found' });
     return;

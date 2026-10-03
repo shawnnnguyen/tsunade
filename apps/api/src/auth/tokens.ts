@@ -7,19 +7,21 @@ const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const ACCESS_TOKEN_TTL_MS = ACCESS_TOKEN_TTL_SECONDS * 1000;
 export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-const getJwtSecret = (): string => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error('JWT_SECRET is required');
-  }
-  return secret;
-};
+const JWT_SECRET_MIN_LENGTH = 32;
+
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
+if (jwtSecret.length < JWT_SECRET_MIN_LENGTH) {
+  throw new Error(`JWT_SECRET must be at least ${String(JWT_SECRET_MIN_LENGTH)} characters`);
+}
 
 export const signAccessToken = (userId: string): string =>
-  jwt.sign({ sub: userId }, getJwtSecret(), { expiresIn: ACCESS_TOKEN_TTL_SECONDS });
+  jwt.sign({ sub: userId }, jwtSecret, { expiresIn: ACCESS_TOKEN_TTL_SECONDS });
 
 export const verifyAccessToken = (token: string): { sub: string } => {
-  const payload = jwt.verify(token, getJwtSecret());
+  const payload = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] });
   if (typeof payload === 'string' || typeof payload.sub !== 'string') {
     throw new Error('invalid access token payload');
   }

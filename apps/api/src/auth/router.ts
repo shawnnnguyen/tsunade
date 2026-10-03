@@ -1,14 +1,33 @@
 import { db, refreshTokens, users } from '@tsunade/db';
-import { eq } from 'drizzle-orm';
-import { Router, type Response } from 'express';
+import { isCurrency, isNonEmptyString, isRecord, SUPPORTED_CURRENCIES } from '@tsunade/shared';
+import { and, eq, gt, isNull } from 'drizzle-orm';
+import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 
-import { isRecord } from '../lib/is-record.js';
 import { clearAuthCookies, getCookie, setAuthCookies } from './cookies.js';
-import { requireAuth } from './middleware.js';
-import { hashPassword, verifyPassword } from './passwords.js';
+import { getUserId, requireAuth } from './middleware.js';
+import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from './passwords.js';
 import { generateRefreshToken, hashRefreshToken, signAccessToken } from './tokens.js';
 
 export const authRouter = Router();
+
+const credentialsRateLimit = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too many requests' },
+});
+
+const refreshRateLimit = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too many requests' },
+});
+
+const EMAIL_MAX_LENGTH = 254;
 
 interface Credentials {
   email: string;
@@ -23,27 +42,41 @@ const parseCredentials = (body: unknown): Credentials | null => {
   if (typeof email !== 'string' || typeof password !== 'string') {
     return null;
   }
-  if (!email.includes('@') || password.length < 8) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const passwordBytes = Buffer.byteLength(password, 'utf8');
+  if (
+    !isNonEmptyString(normalizedEmail, EMAIL_MAX_LENGTH) ||
+    !normalizedEmail.includes('@') ||
+    passwordBytes < 8 ||
+    passwordBytes > 72
+  ) {
     return null;
   }
-  return { email, password };
+  return { email: normalizedEmail, password };
 };
 
-const issueSession = async (res: Response, userId: string): Promise<void> => {
+type Executor = Parameters<typeof db.transaction>[0] extends (tx: infer T) => unknown ? T : never;
+
+interface Session {
+  accessToken: string;
+  refreshToken: string;
+}
+
+const createSession = async (executor: typeof db | Executor, userId: string): Promise<Session> => {
   const accessToken = signAccessToken(userId);
   const refresh = generateRefreshToken();
-  await db.insert(refreshTokens).values({
+  await executor.insert(refreshTokens).values({
     userId,
     tokenHash: refresh.tokenHash,
     expiresAt: refresh.expiresAt,
   });
-  setAuthCookies(res, accessToken, refresh.token);
+  return { accessToken, refreshToken: refresh.token };
 };
 
-authRouter.post('/register', async (req, res) => {
+authRouter.post('/register', credentialsRateLimit, async (req, res) => {
   const credentials = parseCredentials(req.body);
   if (!credentials) {
-    res.status(400).json({ error: 'email and password (min 8 chars) are required' });
+    res.status(400).json({ error: 'email and password (8-72 chars) are required' });
     return;
   }
 
@@ -54,19 +87,28 @@ authRouter.post('/register', async (req, res) => {
   }
 
   const passwordHash = await hashPassword(credentials.password);
-  const [user] = await db
-    .insert(users)
-    .values({ email: credentials.email, passwordHash })
-    .returning();
-  if (!user) {
-    throw new Error('failed to create user');
-  }
+  const { user, session } = await db.transaction(async (tx) => {
+    const [user] = await tx
+      .insert(users)
+      .values({ email: credentials.email, passwordHash })
+      .returning();
+    if (!user) {
+      throw new Error('failed to create user');
+    }
+    const session = await createSession(tx, user.id);
+    return { user, session };
+  });
 
-  await issueSession(res, user.id);
-  res.status(201).json({ id: user.id, email: user.email, createdAt: user.createdAt });
+  setAuthCookies(res, session.accessToken, session.refreshToken);
+  res.status(201).json({
+    id: user.id,
+    email: user.email,
+    baseCurrency: user.baseCurrency,
+    createdAt: user.createdAt,
+  });
 });
 
-authRouter.post('/login', async (req, res) => {
+authRouter.post('/login', credentialsRateLimit, async (req, res) => {
   const credentials = parseCredentials(req.body);
   if (!credentials) {
     res.status(400).json({ error: 'email and password are required' });
@@ -74,16 +116,26 @@ authRouter.post('/login', async (req, res) => {
   }
 
   const user = await db.query.users.findFirst({ where: eq(users.email, credentials.email) });
-  if (!user || !(await verifyPassword(credentials.password, user.passwordHash))) {
+  const valid = await verifyPassword(
+    credentials.password,
+    user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+  );
+  if (!user || !valid) {
     res.status(401).json({ error: 'invalid email or password' });
     return;
   }
 
-  await issueSession(res, user.id);
-  res.json({ id: user.id, email: user.email, createdAt: user.createdAt });
+  const session = await createSession(db, user.id);
+  setAuthCookies(res, session.accessToken, session.refreshToken);
+  res.json({
+    id: user.id,
+    email: user.email,
+    baseCurrency: user.baseCurrency,
+    createdAt: user.createdAt,
+  });
 });
 
-authRouter.post('/refresh', async (req, res) => {
+authRouter.post('/refresh', refreshRateLimit, async (req, res) => {
   const token = getCookie(req, 'refresh_token');
   if (!token) {
     res.status(401).json({ error: 'missing refresh token' });
@@ -91,21 +143,43 @@ authRouter.post('/refresh', async (req, res) => {
   }
 
   const tokenHash = hashRefreshToken(token);
-  const stored = await db.query.refreshTokens.findFirst({
-    where: eq(refreshTokens.tokenHash, tokenHash),
+  const now = new Date();
+
+  const session = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(refreshTokens)
+      .set({ revokedAt: now })
+      .where(
+        and(
+          eq(refreshTokens.tokenHash, tokenHash),
+          isNull(refreshTokens.revokedAt),
+          gt(refreshTokens.expiresAt, now),
+        ),
+      )
+      .returning();
+    if (!row) {
+      return undefined;
+    }
+    return createSession(tx, row.userId);
   });
 
-  if (!stored || stored.revokedAt !== null || stored.expiresAt < new Date()) {
+  if (!session) {
+    const stored = await db.query.refreshTokens.findFirst({
+      where: eq(refreshTokens.tokenHash, tokenHash),
+    });
+    if (stored?.revokedAt !== null && stored?.revokedAt !== undefined) {
+      // Already-rotated token reused: someone else holds a copy. Revoke the whole session.
+      await db
+        .update(refreshTokens)
+        .set({ revokedAt: now })
+        .where(and(eq(refreshTokens.userId, stored.userId), isNull(refreshTokens.revokedAt)));
+    }
     clearAuthCookies(res);
     res.status(401).json({ error: 'invalid refresh token' });
     return;
   }
 
-  await db
-    .update(refreshTokens)
-    .set({ revokedAt: new Date() })
-    .where(eq(refreshTokens.id, stored.id));
-  await issueSession(res, stored.userId);
+  setAuthCookies(res, session.accessToken, session.refreshToken);
   res.status(204).end();
 });
 
@@ -122,10 +196,40 @@ authRouter.post('/logout', async (req, res) => {
 });
 
 authRouter.get('/me', requireAuth, async (req, res) => {
-  const user = await db.query.users.findFirst({ where: eq(users.id, req.userId) });
+  const user = await db.query.users.findFirst({ where: eq(users.id, getUserId(req)) });
   if (!user) {
     res.status(404).json({ error: 'user not found' });
     return;
   }
-  res.json({ id: user.id, email: user.email, createdAt: user.createdAt });
+  res.json({
+    id: user.id,
+    email: user.email,
+    baseCurrency: user.baseCurrency,
+    createdAt: user.createdAt,
+  });
+});
+
+authRouter.patch('/me', requireAuth, async (req, res) => {
+  if (!isRecord(req.body) || !isCurrency(req.body.baseCurrency)) {
+    res
+      .status(400)
+      .json({ error: `baseCurrency must be one of ${SUPPORTED_CURRENCIES.join(', ')}` });
+    return;
+  }
+
+  const [user] = await db
+    .update(users)
+    .set({ baseCurrency: req.body.baseCurrency })
+    .where(eq(users.id, getUserId(req)))
+    .returning();
+  if (!user) {
+    res.status(404).json({ error: 'user not found' });
+    return;
+  }
+  res.json({
+    id: user.id,
+    email: user.email,
+    baseCurrency: user.baseCurrency,
+    createdAt: user.createdAt,
+  });
 });

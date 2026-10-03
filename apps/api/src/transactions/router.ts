@@ -1,18 +1,19 @@
 import { categories, db, tags, transactionTags, transactions } from '@tsunade/db';
-import { and, eq, gte, lte } from 'drizzle-orm';
+import { isRecord } from '@tsunade/shared';
+import { and, desc, eq, gte, lte } from 'drizzle-orm';
 import { Router } from 'express';
 
-import { requireAuth } from '../auth/middleware.js';
-import { isRecord } from '../lib/is-record.js';
+import { getUserId } from '../auth/middleware.js';
+import { findOwned } from '../lib/find-owned.js';
+import { parseLimit, parseOffset } from '../lib/pagination.js';
 
 export const transactionsRouter = Router();
 
-transactionsRouter.use(requireAuth);
-
 transactionsRouter.get('/', async (req, res) => {
-  const { accountId, categoryId, dateFrom, dateTo, minAmount, maxAmount } = req.query;
+  const { accountId, categoryId, dateFrom, dateTo, minAmount, maxAmount, limit, offset } =
+    req.query;
 
-  const conditions = [eq(transactions.userId, req.userId)];
+  const conditions = [eq(transactions.userId, getUserId(req))];
   if (typeof accountId === 'string') {
     conditions.push(eq(transactions.accountId, accountId));
   }
@@ -34,14 +35,21 @@ transactionsRouter.get('/', async (req, res) => {
 
   const rows = await db.query.transactions.findMany({
     where: and(...conditions),
+    orderBy: [desc(transactions.date), desc(transactions.id)],
+    limit: parseLimit(limit),
+    offset: parseOffset(offset),
   });
   res.json(rows);
 });
 
 transactionsRouter.patch('/:id', async (req, res) => {
-  const existing = await db.query.transactions.findFirst({
-    where: and(eq(transactions.id, req.params.id), eq(transactions.userId, req.userId)),
-  });
+  const existing = await findOwned(
+    (args) => db.query.transactions.findFirst(args),
+    transactions.id,
+    transactions.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!existing) {
     res.status(404).json({ error: 'transaction not found' });
     return;
@@ -59,9 +67,13 @@ transactionsRouter.patch('/:id', async (req, res) => {
   }
 
   if (categoryId !== null) {
-    const category = await db.query.categories.findFirst({
-      where: and(eq(categories.id, categoryId), eq(categories.userId, req.userId)),
-    });
+    const category = await findOwned(
+      (args) => db.query.categories.findFirst(args),
+      categories.id,
+      categories.userId,
+      categoryId,
+      getUserId(req),
+    );
     if (!category) {
       res.status(400).json({ error: 'categoryId not found' });
       return;
@@ -73,13 +85,21 @@ transactionsRouter.patch('/:id', async (req, res) => {
     .set({ categoryId })
     .where(eq(transactions.id, existing.id))
     .returning();
+  if (!transaction) {
+    res.status(404).json({ error: 'transaction not found' });
+    return;
+  }
   res.json(transaction);
 });
 
 transactionsRouter.get('/:id/tags', async (req, res) => {
-  const transaction = await db.query.transactions.findFirst({
-    where: and(eq(transactions.id, req.params.id), eq(transactions.userId, req.userId)),
-  });
+  const transaction = await findOwned(
+    (args) => db.query.transactions.findFirst(args),
+    transactions.id,
+    transactions.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!transaction) {
     res.status(404).json({ error: 'transaction not found' });
     return;
@@ -89,14 +109,18 @@ transactionsRouter.get('/:id/tags', async (req, res) => {
     .select({ id: tags.id, userId: tags.userId, name: tags.name, createdAt: tags.createdAt })
     .from(transactionTags)
     .innerJoin(tags, eq(transactionTags.tagId, tags.id))
-    .where(eq(transactionTags.transactionId, transaction.id));
+    .where(and(eq(transactionTags.transactionId, transaction.id), eq(tags.userId, getUserId(req))));
   res.json(rows);
 });
 
 transactionsRouter.post('/:id/tags', async (req, res) => {
-  const transaction = await db.query.transactions.findFirst({
-    where: and(eq(transactions.id, req.params.id), eq(transactions.userId, req.userId)),
-  });
+  const transaction = await findOwned(
+    (args) => db.query.transactions.findFirst(args),
+    transactions.id,
+    transactions.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!transaction) {
     res.status(404).json({ error: 'transaction not found' });
     return;
@@ -108,9 +132,13 @@ transactionsRouter.post('/:id/tags', async (req, res) => {
   }
   const { tagId } = req.body;
 
-  const tag = await db.query.tags.findFirst({
-    where: and(eq(tags.id, tagId), eq(tags.userId, req.userId)),
-  });
+  const tag = await findOwned(
+    (args) => db.query.tags.findFirst(args),
+    tags.id,
+    tags.userId,
+    tagId,
+    getUserId(req),
+  );
   if (!tag) {
     res.status(400).json({ error: 'tagId not found' });
     return;
@@ -126,7 +154,7 @@ transactionsRouter.post('/:id/tags', async (req, res) => {
 
   const [transactionTag] = await db
     .insert(transactionTags)
-    .values({ transactionId: transaction.id, tagId, userId: req.userId })
+    .values({ transactionId: transaction.id, tagId, userId: getUserId(req) })
     .returning();
   if (!transactionTag) {
     throw new Error('failed to attach tag');
@@ -135,9 +163,13 @@ transactionsRouter.post('/:id/tags', async (req, res) => {
 });
 
 transactionsRouter.delete('/:id/tags/:tagId', async (req, res) => {
-  const transaction = await db.query.transactions.findFirst({
-    where: and(eq(transactions.id, req.params.id), eq(transactions.userId, req.userId)),
-  });
+  const transaction = await findOwned(
+    (args) => db.query.transactions.findFirst(args),
+    transactions.id,
+    transactions.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!transaction) {
     res.status(404).json({ error: 'transaction not found' });
     return;

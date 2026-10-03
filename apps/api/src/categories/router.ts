@@ -1,36 +1,38 @@
 import { categories, db } from '@tsunade/db';
-import { and, eq } from 'drizzle-orm';
+import { isNonEmptyString, isRecord } from '@tsunade/shared';
+import { desc, eq } from 'drizzle-orm';
 import { Router } from 'express';
 
-import { requireAuth } from '../auth/middleware.js';
-import { isRecord } from '../lib/is-record.js';
+import { getUserId } from '../auth/middleware.js';
+import { findOwned } from '../lib/find-owned.js';
+import { parseLimit, parseOffset } from '../lib/pagination.js';
 
 export const categoriesRouter = Router();
 
-categoriesRouter.use(requireAuth);
+const NAME_MAX_LENGTH = 200;
 
 interface NewCategory {
   name: string;
-  parentId: string | null;
 }
 
 const parseNewCategory = (body: unknown): NewCategory | null => {
   if (!isRecord(body)) {
     return null;
   }
-  const { name, parentId } = body;
-  if (typeof name !== 'string') {
+  const { name } = body;
+  if (typeof name !== 'string' || !isNonEmptyString(name, NAME_MAX_LENGTH)) {
     return null;
   }
-  if (parentId !== undefined && parentId !== null && typeof parentId !== 'string') {
-    return null;
-  }
-  return { name, parentId: parentId ?? null };
+  return { name: name.trim() };
 };
 
 categoriesRouter.get('/', async (req, res) => {
+  const { limit, offset } = req.query;
   const rows = await db.query.categories.findMany({
-    where: eq(categories.userId, req.userId),
+    where: eq(categories.userId, getUserId(req)),
+    orderBy: [desc(categories.createdAt), desc(categories.id)],
+    limit: parseLimit(limit),
+    offset: parseOffset(offset),
   });
   res.json(rows);
 });
@@ -42,19 +44,9 @@ categoriesRouter.post('/', async (req, res) => {
     return;
   }
 
-  if (input.parentId !== null) {
-    const parent = await db.query.categories.findFirst({
-      where: and(eq(categories.id, input.parentId), eq(categories.userId, req.userId)),
-    });
-    if (!parent) {
-      res.status(400).json({ error: 'parentId not found' });
-      return;
-    }
-  }
-
   const [category] = await db
     .insert(categories)
-    .values({ ...input, userId: req.userId })
+    .values({ ...input, userId: getUserId(req) })
     .returning();
   if (!category) {
     throw new Error('failed to create category');
@@ -63,9 +55,13 @@ categoriesRouter.post('/', async (req, res) => {
 });
 
 categoriesRouter.get('/:id', async (req, res) => {
-  const category = await db.query.categories.findFirst({
-    where: and(eq(categories.id, req.params.id), eq(categories.userId, req.userId)),
-  });
+  const category = await findOwned(
+    (args) => db.query.categories.findFirst(args),
+    categories.id,
+    categories.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!category) {
     res.status(404).json({ error: 'category not found' });
     return;
@@ -74,35 +70,37 @@ categoriesRouter.get('/:id', async (req, res) => {
 });
 
 categoriesRouter.patch('/:id', async (req, res) => {
-  const existing = await db.query.categories.findFirst({
-    where: and(eq(categories.id, req.params.id), eq(categories.userId, req.userId)),
-  });
+  const existing = await findOwned(
+    (args) => db.query.categories.findFirst(args),
+    categories.id,
+    categories.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!existing) {
     res.status(404).json({ error: 'category not found' });
     return;
   }
 
+  if (!isRecord(req.body)) {
+    res.status(400).json({ error: 'request body must be an object' });
+    return;
+  }
+
   const patch: Partial<NewCategory> = {};
-  if (isRecord(req.body)) {
-    if (typeof req.body.name === 'string') {
-      patch.name = req.body.name;
+  if ('name' in req.body) {
+    if (typeof req.body.name !== 'string' || !isNonEmptyString(req.body.name, NAME_MAX_LENGTH)) {
+      res
+        .status(400)
+        .json({ error: `name must be a non-empty string up to ${String(NAME_MAX_LENGTH)} chars` });
+      return;
     }
-    if (req.body.parentId === null || typeof req.body.parentId === 'string') {
-      if (req.body.parentId === existing.id) {
-        res.status(400).json({ error: 'parentId cannot be its own category' });
-        return;
-      }
-      if (req.body.parentId !== null) {
-        const parent = await db.query.categories.findFirst({
-          where: and(eq(categories.id, req.body.parentId), eq(categories.userId, req.userId)),
-        });
-        if (!parent) {
-          res.status(400).json({ error: 'parentId not found' });
-          return;
-        }
-      }
-      patch.parentId = req.body.parentId;
-    }
+    patch.name = req.body.name.trim();
+  }
+
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({ error: 'no valid fields to update' });
+    return;
   }
 
   const [category] = await db
@@ -110,13 +108,21 @@ categoriesRouter.patch('/:id', async (req, res) => {
     .set(patch)
     .where(eq(categories.id, existing.id))
     .returning();
+  if (!category) {
+    res.status(404).json({ error: 'category not found' });
+    return;
+  }
   res.json(category);
 });
 
 categoriesRouter.delete('/:id', async (req, res) => {
-  const existing = await db.query.categories.findFirst({
-    where: and(eq(categories.id, req.params.id), eq(categories.userId, req.userId)),
-  });
+  const existing = await findOwned(
+    (args) => db.query.categories.findFirst(args),
+    categories.id,
+    categories.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!existing) {
     res.status(404).json({ error: 'category not found' });
     return;

@@ -1,13 +1,15 @@
 import { categories, db, rules } from '@tsunade/db';
-import { and, eq } from 'drizzle-orm';
+import { isNonEmptyString, isRecord } from '@tsunade/shared';
+import { desc, eq } from 'drizzle-orm';
 import { Router } from 'express';
 
-import { requireAuth } from '../auth/middleware.js';
-import { isRecord } from '../lib/is-record.js';
+import { getUserId } from '../auth/middleware.js';
+import { findOwned } from '../lib/find-owned.js';
+import { parseLimit, parseOffset } from '../lib/pagination.js';
 
 export const rulesRouter = Router();
 
-rulesRouter.use(requireAuth);
+const PATTERN_MAX_LENGTH = 500;
 
 interface NewRule {
   categoryId: string;
@@ -23,18 +25,26 @@ const parseNewRule = (body: unknown): NewRule | null => {
     return null;
   }
   const { categoryId, matchField, pattern } = body;
-  if (typeof categoryId !== 'string' || typeof pattern !== 'string') {
+  if (
+    typeof categoryId !== 'string' ||
+    typeof pattern !== 'string' ||
+    !isNonEmptyString(pattern, PATTERN_MAX_LENGTH)
+  ) {
     return null;
   }
   if (!isMatchField(matchField)) {
     return null;
   }
-  return { categoryId, matchField, pattern };
+  return { categoryId, matchField, pattern: pattern.trim() };
 };
 
 rulesRouter.get('/', async (req, res) => {
+  const { limit, offset } = req.query;
   const rows = await db.query.rules.findMany({
-    where: eq(rules.userId, req.userId),
+    where: eq(rules.userId, getUserId(req)),
+    orderBy: [desc(rules.createdAt), desc(rules.id)],
+    limit: parseLimit(limit),
+    offset: parseOffset(offset),
   });
   res.json(rows);
 });
@@ -46,9 +56,13 @@ rulesRouter.post('/', async (req, res) => {
     return;
   }
 
-  const category = await db.query.categories.findFirst({
-    where: and(eq(categories.id, input.categoryId), eq(categories.userId, req.userId)),
-  });
+  const category = await findOwned(
+    (args) => db.query.categories.findFirst(args),
+    categories.id,
+    categories.userId,
+    input.categoryId,
+    getUserId(req),
+  );
   if (!category) {
     res.status(400).json({ error: 'categoryId not found' });
     return;
@@ -56,7 +70,7 @@ rulesRouter.post('/', async (req, res) => {
 
   const [rule] = await db
     .insert(rules)
-    .values({ ...input, userId: req.userId })
+    .values({ ...input, userId: getUserId(req) })
     .returning();
   if (!rule) {
     throw new Error('failed to create rule');
@@ -65,9 +79,13 @@ rulesRouter.post('/', async (req, res) => {
 });
 
 rulesRouter.get('/:id', async (req, res) => {
-  const rule = await db.query.rules.findFirst({
-    where: and(eq(rules.id, req.params.id), eq(rules.userId, req.userId)),
-  });
+  const rule = await findOwned(
+    (args) => db.query.rules.findFirst(args),
+    rules.id,
+    rules.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!rule) {
     res.status(404).json({ error: 'rule not found' });
     return;
@@ -76,42 +94,83 @@ rulesRouter.get('/:id', async (req, res) => {
 });
 
 rulesRouter.patch('/:id', async (req, res) => {
-  const existing = await db.query.rules.findFirst({
-    where: and(eq(rules.id, req.params.id), eq(rules.userId, req.userId)),
-  });
+  const existing = await findOwned(
+    (args) => db.query.rules.findFirst(args),
+    rules.id,
+    rules.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!existing) {
     res.status(404).json({ error: 'rule not found' });
     return;
   }
 
+  if (!isRecord(req.body)) {
+    res.status(400).json({ error: 'request body must be an object' });
+    return;
+  }
+
   const patch: Partial<NewRule> = {};
-  if (isRecord(req.body)) {
-    if (typeof req.body.categoryId === 'string') {
-      const category = await db.query.categories.findFirst({
-        where: and(eq(categories.id, req.body.categoryId), eq(categories.userId, req.userId)),
+  if ('categoryId' in req.body) {
+    if (typeof req.body.categoryId !== 'string') {
+      res.status(400).json({ error: 'categoryId must be a string' });
+      return;
+    }
+    const category = await findOwned(
+      (args) => db.query.categories.findFirst(args),
+      categories.id,
+      categories.userId,
+      req.body.categoryId,
+      getUserId(req),
+    );
+    if (!category) {
+      res.status(400).json({ error: 'categoryId not found' });
+      return;
+    }
+    patch.categoryId = req.body.categoryId;
+  }
+  if ('matchField' in req.body) {
+    if (!isMatchField(req.body.matchField)) {
+      res.status(400).json({ error: 'matchField must be one of description, amount, merchant' });
+      return;
+    }
+    patch.matchField = req.body.matchField;
+  }
+  if ('pattern' in req.body) {
+    if (
+      typeof req.body.pattern !== 'string' ||
+      !isNonEmptyString(req.body.pattern, PATTERN_MAX_LENGTH)
+    ) {
+      res.status(400).json({
+        error: `pattern must be a non-empty string up to ${String(PATTERN_MAX_LENGTH)} chars`,
       });
-      if (!category) {
-        res.status(400).json({ error: 'categoryId not found' });
-        return;
-      }
-      patch.categoryId = req.body.categoryId;
+      return;
     }
-    if (isMatchField(req.body.matchField)) {
-      patch.matchField = req.body.matchField;
-    }
-    if (typeof req.body.pattern === 'string') {
-      patch.pattern = req.body.pattern;
-    }
+    patch.pattern = req.body.pattern.trim();
+  }
+
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({ error: 'no valid fields to update' });
+    return;
   }
 
   const [rule] = await db.update(rules).set(patch).where(eq(rules.id, existing.id)).returning();
+  if (!rule) {
+    res.status(404).json({ error: 'rule not found' });
+    return;
+  }
   res.json(rule);
 });
 
 rulesRouter.delete('/:id', async (req, res) => {
-  const existing = await db.query.rules.findFirst({
-    where: and(eq(rules.id, req.params.id), eq(rules.userId, req.userId)),
-  });
+  const existing = await findOwned(
+    (args) => db.query.rules.findFirst(args),
+    rules.id,
+    rules.userId,
+    req.params.id,
+    getUserId(req),
+  );
   if (!existing) {
     res.status(404).json({ error: 'rule not found' });
     return;
