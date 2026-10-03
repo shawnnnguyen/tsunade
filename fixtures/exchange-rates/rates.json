@@ -1,0 +1,64 @@
+{
+  "live": {
+    "USD": {
+      "success": true,
+      "timestamp": 1790899865,
+      "source": "USD",
+      "quotes": { "USDEUR": 0.889302 }
+    },
+    "GBP": {
+      "success": true,
+      "timestamp": 1790899984,
+      "source": "GBP",
+      "quotes": { "GBPEUR": 1.173429 }
+    },
+    "JPY": {
+      "success": true,
+      "timestamp": 1790899984,
+      "source": "JPY",
+      "quotes": { "JPYEUR": 0.0062 }
+    },
+    "CHF": {
+      "success": true,
+      "timestamp": 1790899984,
+      "source": "CHF",
+      "quotes": { "CHFEUR": 1.0638 }
+    }
+  },
+  "historical": {
+    "2026-09-01": {
+      "USD": {
+        "success": true,
+        "historical": true,
+        "date": "2026-09-01",
+        "timestamp": 1788307199,
+        "source": "USD",
+        "quotes": { "USDEUR": 0.86255 }
+      },
+      "GBP": {
+        "success": true,
+        "historical": true,
+        "date": "2026-09-01",
+        "timestamp": 1788307199,
+        "source": "GBP",
+        "quotes": { "GBPEUR": 1.165687 }
+      },
+      "JPY": {
+        "success": true,
+        "historical": true,
+        "date": "2026-09-01",
+        "timestamp": 1788307199,
+        "source": "JPY",
+        "quotes": { "JPYEUR": 0.0061 }
+      },
+      "CHF": {
+        "success": true,
+        "historical": true,
+        "date": "2026-09-01",
+        "timestamp": 1788307199,
+        "source": "CHF",
+        "quotes": { "CHFEUR": 1.0591 }
+      }
+    }
+  }
+}

@@ -1,5 +1,4 @@
 export * from './types/index.js';
-export * from './adapters/index.js';
 export * from './is-record.js';
 export * from './is-numeric-string.js';
 export * from './is-currency.js';

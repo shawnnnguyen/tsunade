@@ -1,0 +1,20 @@
+[
+  {
+    "symbol": "AAPL",
+    "price": "227.52",
+    "currency": "USD",
+    "asOf": "2026-09-30T20:00:00.000Z"
+  },
+  {
+    "symbol": "MSFT",
+    "price": "430.18",
+    "currency": "USD",
+    "asOf": "2026-09-30T20:00:00.000Z"
+  },
+  {
+    "symbol": "VOO",
+    "price": "548.91",
+    "currency": "USD",
+    "asOf": "2026-09-30T20:00:00.000Z"
+  }
+]
