@@ -6,6 +6,7 @@ import { Router } from 'express';
 import { getUserId } from '../auth/middleware.js';
 import { findOwned } from '../lib/find-owned.js';
 import { parseLimit, parseOffset } from '../lib/pagination.js';
+import { backfillCategories } from './backfill.js';
 
 export const rulesRouter = Router();
 
@@ -68,13 +69,17 @@ rulesRouter.post('/', async (req, res) => {
     return;
   }
 
-  const [rule] = await db
-    .insert(rules)
-    .values({ ...input, userId: getUserId(req) })
-    .returning();
-  if (!rule) {
-    throw new Error('failed to create rule');
-  }
+  const rule = await db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(rules)
+      .values({ ...input, userId: getUserId(req) })
+      .returning();
+    if (!inserted) {
+      throw new Error('failed to create rule');
+    }
+    await backfillCategories(tx, getUserId(req));
+    return inserted;
+  });
   res.status(201).json(rule);
 });
 
@@ -155,7 +160,18 @@ rulesRouter.patch('/:id', async (req, res) => {
     return;
   }
 
-  const [rule] = await db.update(rules).set(patch).where(eq(rules.id, existing.id)).returning();
+  const rule = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(rules)
+      .set(patch)
+      .where(eq(rules.id, existing.id))
+      .returning();
+    if (!updated) {
+      return null;
+    }
+    await backfillCategories(tx, getUserId(req));
+    return updated;
+  });
   if (!rule) {
     res.status(404).json({ error: 'rule not found' });
     return;

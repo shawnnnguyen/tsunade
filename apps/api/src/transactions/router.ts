@@ -82,7 +82,7 @@ transactionsRouter.patch('/:id', async (req, res) => {
 
   const [transaction] = await db
     .update(transactions)
-    .set({ categoryId })
+    .set({ categoryId, categoryIsManual: true })
     .where(eq(transactions.id, existing.id))
     .returning();
   if (!transaction) {

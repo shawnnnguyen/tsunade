@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tsunade/categorization": "workspace:*",
     "@tsunade/db": "workspace:*",
     "@tsunade/shared": "workspace:*",
     "bcryptjs": "^3.0.3",
