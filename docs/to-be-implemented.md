@@ -202,3 +202,56 @@ is `userId`-scoped or gated by a prior `findOwned` check). New issues found, not
     masked by a newer entry, never corrected or removed.
 46. `apps/api/src/transactions/router.ts`'s tag-attach handler binds `transactionTag` from a
     `.returning()` that's never used (the response returns `tag` instead).
+
+## CSV imports (Phase 4 review, 2026-10-04)
+
+A fresh-context review of `apps/api/src/imports/{router,csv}.ts` found 8 issues; the first 7 were
+real bugs (ragged/malformed CSV rows and oversized batches 500ing the whole request instead of
+skip-and-collect, amount overflow/precision not validated before insert, date validated by
+`Date.parse` but inserted raw so Postgres's `DateStyle` could silently reinterpret it, control
+characters/unbounded length in `description`/`merchant` reaching the DB, Multer errors not mapped
+to 4xx, Multer's non-file multipart fields left unbounded) — all fixed same-session, re-verified
+against real local Postgres (ragged row → skip-and-collect; malformed quote → clean 400; a 7,000-row
+file → all inserted via chunked `INSERT`s instead of hitting Postgres's 65535-bind-parameter
+ceiling; invalid calendar date / out-of-range amount / >4-decimal amount / NUL byte / 600-char
+description → all cleanly skip-and-collected; oversized file → 413; too many multipart fields →
+400). Only the 8th finding and its own nits remain open:
+
+47. **No duplicate-import protection.** Nothing distinguishes a re-upload — a double-clicked
+    commit, or a client retry after a timeout, duplicates every transaction in the file. Unlike the
+    Enable Banking path (Phase 5's `transactions_user_enable_banking_tx_unique` index),
+    `enableBankingTransactionId` is `NULL` for every CSV-sourced row, and Postgres unique indexes
+    ignore `NULL`, so there's no natural dedup key here. Needs a product decision (e.g. a
+    client-side "importing..." disable, or a content hash) before `apps/web` wires up a commit
+    button — not fixed here since it's a design choice, not a bug.
+48. `apps/api/src/imports/router.ts`'s `parseColumnMapping` doesn't reject negative or fractional
+    column indices — a bad mapping just makes every row fail with a misleading "date is required"
+    instead of one clean 400 on the mapping itself.
+49. `normalizeCsvDate`'s non-ISO branch (`apps/api/src/imports/csv.ts`) still trusts `Date.parse`'s
+    leniency for ambiguous/malformed non-ISO strings (e.g. a bare `"5"` parses to some plausible
+    date rather than being rejected) — distinct from, and narrower than, the already-accepted
+    "formats `Date.parse` doesn't handle" gap in `PLAN.md`'s Phase 4 section; only the strict-ISO
+    `YYYY-MM-DD` case got a real calendar round-trip check.
+50. `POST /imports/csv/preview` parses the entire uploaded file (up to 10MB) just to return 5 sample
+    rows; `csv-parse`'s `to_line` option would bound the parse itself instead of truncating after.
+51. The `errors` array in `POST /imports/csv/commit`'s response is unbounded — an all-bad 10MB CSV
+    produces a response with on the order of 10^5 entries.
+52. `apps/api/src/imports/router.ts` calls `getUserId(req)` inside the per-row loop instead of
+    hoisting it once, unlike every other router.
+
+## Account deletion
+
+53. **No cascade/restrict behavior on any FK referencing `users.id`.** `accounts`, `categories`,
+    `rules`, `transactions`, `refresh_tokens`, `tags`, `holdings`, `assets`, and every other
+    table scoped by `userId` reference `users.id` with no `onDelete` clause, so `DELETE FROM users`
+    fails on the first dependent row instead of cascading or being cleanly rejected. Not reachable
+    today — there's no `DELETE /users/:id` or "delete my account" endpoint — but it'll surface the
+    moment one is built.
+    **Confirmed decision (from the user directly):** account deletion will be a **soft delete**,
+    not a hard `DELETE FROM users` — so this `onDelete`-less FK gap is moot by design, not
+    something to fix with cascade clauses. When this feature gets built: add a `deletedAt
+timestamp` (nullable) on `users`, have the delete endpoint set it instead of removing the row,
+    and every `userId`-scoped query across the app needs to keep working unchanged against the
+    still-present row (login/`requireAuth` should reject a soft-deleted user, same shape as the
+    existing refresh-token-reuse revocation check). No schema change needed now — flagging the
+    shape of the fix for when a concrete "delete my account" task exists.

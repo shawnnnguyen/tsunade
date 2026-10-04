@@ -15,9 +15,14 @@ workspaces. Deployed to Azure via Terraform; Docker Compose is for local dev onl
   far: `/health`, full `/auth/*` (register/login/refresh/logout/me); full CRUD for `accounts`,
   `holdings`, `assets` (+ `/assets/:id/value-log`), `rules`, and `transactions` (list/filter +
   category-override `PATCH`, + `/transactions/:id/tags`); create/list/delete (no rename) for
-  `categories` and `tags`. Rule create/edit also runs a categorization backfill over eligible
-  transactions (`apps/api/src/rules/backfill.ts`, using `packages/categorization`). Not yet
-  built: CSV imports, Enable Banking webhooks, analytics endpoints — see `PLAN.md` phases 2-6.
+  `categories` and `tags`; CSV import (`/imports/csv/preview`, `/imports/csv/commit` —
+  `apps/api/src/imports/{router,csv}.ts`), uploaded via `multer` and parsed with `csv-parse`,
+  taking a user-supplied column-index mapping, with per-row skip-and-collect validation and
+  chunked inserts. Rule create/edit runs a categorization backfill over eligible transactions
+  (`apps/api/src/rules/backfill.ts`, using `packages/categorization`); CSV commit instead matches
+  each new row against the user's rules inline at insert time (the backfill path only ever
+  touches existing, already-stored blank transactions). Not yet built: Enable Banking webhooks,
+  analytics endpoints — see `PLAN.md` phases 5-6.
 - `apps/worker` — BullMQ worker: Enable Banking syncs, market-data polling. Not yet created. (The
   categorization backfill runs in `apps/api`, not here — see `docs/architecture.md`'s "Ledger &
   rules engine".)
