@@ -1,5 +1,6 @@
 import { isRecord } from '@tsunade/shared';
 import type { NextFunction, Request, Response } from 'express';
+import { MulterError } from 'multer';
 
 const isPgError = (err: unknown): err is { code: string; table?: string; detail?: string } =>
   isRecord(err) && typeof err.code === 'string' && typeof err.severity === 'string';
@@ -36,6 +37,12 @@ export const errorHandler = (
 ): void => {
   if (res.headersSent) {
     next(err);
+    return;
+  }
+
+  if (err instanceof MulterError) {
+    const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    res.status(status).json({ error: status === 413 ? 'file too large' : 'invalid upload' });
     return;
   }
 

@@ -1,20 +1,32 @@
 import { accounts, db, rules, transactions } from '@tsunade/db';
 import { cleanDescription, matchRule } from '@tsunade/categorization';
-import { isCurrency, isNumericString, isRecord } from '@tsunade/shared';
+import {
+  isCurrency,
+  isNonEmptyString,
+  isNumericString,
+  isRecord,
+  isWithinNumericBounds,
+} from '@tsunade/shared';
 import { desc, eq } from 'drizzle-orm';
 import { Router } from 'express';
 import multer from 'multer';
 
 import { getUserId } from '../auth/middleware.js';
 import { findOwned } from '../lib/find-owned.js';
-import { parseCsvPreview, parseCsvRows } from './csv.js';
+import { normalizeCsvDate, parseCsvPreview, parseCsvRows } from './csv.js';
 
 export const importsRouter = Router();
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const DESCRIPTION_MAX_LENGTH = 500;
+const MERCHANT_MAX_LENGTH = 200;
+const AMOUNT_PRECISION = 19;
+const AMOUNT_SCALE = 4;
+const INSERT_CHUNK_SIZE = 1000;
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_FILE_SIZE_BYTES },
+  limits: { fileSize: MAX_FILE_SIZE_BYTES, files: 1, fields: 8, parts: 10, fieldSize: 64 * 1024 },
 });
 
 interface ColumnMapping {
@@ -54,7 +66,7 @@ importsRouter.post('/csv/preview', upload.single('file'), (req, res) => {
   }
   const preview = parseCsvPreview(req.file.buffer);
   if (!preview) {
-    res.status(400).json({ error: 'csv file has no header row' });
+    res.status(400).json({ error: 'csv file could not be parsed' });
     return;
   }
   res.json(preview);
@@ -85,6 +97,12 @@ importsRouter.post('/csv/commit', upload.single('file'), async (req, res) => {
     return;
   }
 
+  const rows = parseCsvRows(req.file.buffer);
+  if (rows === null) {
+    res.status(400).json({ error: 'csv file could not be parsed' });
+    return;
+  }
+
   const account = await findOwned(
     (args) => db.query.accounts.findFirst(args),
     accounts.id,
@@ -102,7 +120,6 @@ importsRouter.post('/csv/commit', upload.single('file'), async (req, res) => {
     orderBy: [desc(rules.createdAt), desc(rules.id)],
   });
 
-  const rows = parseCsvRows(req.file.buffer);
   const newTransactions: (typeof transactions.$inferInsert)[] = [];
   const errors: { row: number; reason: string }[] = [];
 
@@ -117,20 +134,39 @@ importsRouter.post('/csv/commit', upload.single('file'), async (req, res) => {
       errors.push({ row: rowNumber, reason: 'date is required' });
       return;
     }
-    if (description === undefined || description === '') {
-      errors.push({ row: rowNumber, reason: 'description is required' });
+    const normalizedDate = normalizeCsvDate(date);
+    if (normalizedDate === null) {
+      errors.push({ row: rowNumber, reason: 'date is not a valid date' });
       return;
     }
-    if (amount === undefined || !isNumericString(amount)) {
-      errors.push({ row: rowNumber, reason: 'amount must be a numeric string' });
+    if (description === undefined || !isNonEmptyString(description, DESCRIPTION_MAX_LENGTH)) {
+      errors.push({
+        row: rowNumber,
+        reason: `description must be a non-empty string up to ${String(DESCRIPTION_MAX_LENGTH)} chars`,
+      });
       return;
     }
-    if (Number.isNaN(Date.parse(date))) {
-      errors.push({ row: rowNumber, reason: 'date is not parseable' });
+    if (
+      amount === undefined ||
+      !isNumericString(amount) ||
+      !isWithinNumericBounds(amount, AMOUNT_PRECISION, AMOUNT_SCALE)
+    ) {
+      errors.push({ row: rowNumber, reason: 'amount must be a numeric string within range' });
+      return;
+    }
+    if (
+      merchant !== undefined &&
+      merchant !== '' &&
+      !isNonEmptyString(merchant, MERCHANT_MAX_LENGTH)
+    ) {
+      errors.push({
+        row: rowNumber,
+        reason: `merchant must be up to ${String(MERCHANT_MAX_LENGTH)} chars`,
+      });
       return;
     }
 
-    const merchantValue = merchant !== undefined && merchant !== '' ? merchant : null;
+    const merchantValue = merchant !== undefined && merchant !== '' ? merchant.trim() : null;
     const cleanedDescription = cleanDescription(description);
     const categoryId = matchRule(
       { description: cleanedDescription, merchant: merchantValue, amount },
@@ -142,8 +178,8 @@ importsRouter.post('/csv/commit', upload.single('file'), async (req, res) => {
       accountId,
       categoryId,
       categoryIsManual: false,
-      date,
-      description,
+      date: normalizedDate,
+      description: description.trim(),
       cleanedDescription,
       merchant: merchantValue,
       amount,
@@ -152,10 +188,9 @@ importsRouter.post('/csv/commit', upload.single('file'), async (req, res) => {
     });
   });
 
-  const created =
-    newTransactions.length > 0
-      ? (await db.insert(transactions).values(newTransactions).returning()).length
-      : 0;
+  for (let i = 0; i < newTransactions.length; i += INSERT_CHUNK_SIZE) {
+    await db.insert(transactions).values(newTransactions.slice(i, i + INSERT_CHUNK_SIZE));
+  }
 
-  res.status(201).json({ created, errors });
+  res.status(201).json({ created: newTransactions.length, errors });
 });
