@@ -5,6 +5,7 @@ export interface Transaction {
   userId: string;
   accountId: string;
   categoryId: string | null;
+  categoryIsManual: boolean;
   date: string;
   description: string;
   cleanedDescription: string | null;

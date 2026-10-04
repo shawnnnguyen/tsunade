@@ -1,4 +1,14 @@
-import { date, index, numeric, pgEnum, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  date,
+  index,
+  numeric,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 import { accounts } from './accounts.js';
 import { categories } from './categories.js';
@@ -17,6 +27,7 @@ export const transactions = pgTable(
       .notNull()
       .references(() => accounts.id),
     categoryId: uuid().references(() => categories.id, { onDelete: 'set null' }),
+    categoryIsManual: boolean().notNull().default(false),
     date: date().notNull(),
     description: text().notNull(),
     cleanedDescription: text(),
