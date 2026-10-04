@@ -12,22 +12,30 @@ workspaces. Deployed to Azure via Terraform; Docker Compose is for local dev onl
 ## Repo modules
 
 - `apps/api` — Express backend: routes, controllers, request/response schemas. Implemented so
-  far: `/health`, full `/auth/*` (register/login/refresh/logout/me), and full CRUD for
-  `accounts`, `categories`, `rules`, `holdings`, `assets` (+ `/assets/:id/value-log`), `tags`, and
-  `transactions` (+ `/transactions/:id/tags`). Not yet built: CSV imports, Enable Banking
-  webhooks, analytics endpoints — see `PLAN.md` phases 2-6.
-- `apps/worker` — BullMQ worker: Enable Banking syncs, market-data polling, categorization backfill. Not
-  yet created.
+  far: `/health`, full `/auth/*` (register/login/refresh/logout/me); full CRUD for `accounts`,
+  `holdings`, `assets` (+ `/assets/:id/value-log`), `rules`, and `transactions` (list/filter +
+  category-override `PATCH`, + `/transactions/:id/tags`); create/list/delete (no rename) for
+  `categories` and `tags`. Rule create/edit also runs a categorization backfill over eligible
+  transactions (`apps/api/src/rules/backfill.ts`, using `packages/categorization`). Not yet
+  built: CSV imports, Enable Banking webhooks, analytics endpoints — see `PLAN.md` phases 2-6.
+- `apps/worker` — BullMQ worker: Enable Banking syncs, market-data polling. Not yet created. (The
+  categorization backfill runs in `apps/api`, not here — see `docs/architecture.md`'s "Ledger &
+  rules engine".)
 - `apps/web` — React SPA. Not yet created.
 - `packages/db` — Drizzle schema, migrations, shared DB client (imported by `api` + `worker`).
   All tables from `docs/architecture.md`'s data model exist: `users`, `refresh_tokens`,
-  `accounts`, `categories` (flat, no hierarchy), `rules`, `transactions`, `tags`,
-  `transaction_tags`, `holdings`, `valuation_snapshots`, `assets`, `asset_value_logs`.
+  `accounts`, `categories` (flat, no hierarchy), `rules`, `transactions` (including
+  `categoryIsManual`, which marks a category as user-set so the backfill never overwrites it),
+  `tags`, `transaction_tags`, `holdings`, `valuation_snapshots`, `assets`, `asset_value_logs`.
 - `packages/shared` — shared TS types, input-validation helpers (`isRecord`, `isNumericString`,
   `isCurrency`, `isNonEmptyString`, `isWithinNumericBounds`), and adapter interfaces/
   implementations for `MarketDataAdapter`/`ExchangeRateAdapter` (real + fixture-backed) and
   `EnableBankingAdapter` (interface/types only — no implementation yet, deliberately not
   fixture-backed; see `PLAN.md` Phase 2).
+- `packages/categorization` — pure categorization logic (`cleanDescription`, `matchRule`), no DB
+  or HTTP, depends only on `@tsunade/shared`. Used by `apps/api`'s rules backfill today and will be
+  used by `apps/worker`'s Enable Banking sync once that exists — kept separate so neither app
+  imports the other's internals.
 - `infra/` — Terraform for the Azure deployment. Not yet created.
 - `fixtures/` — synthetic market-data/exchange-rate inputs for adapter stubs and tests.
 - `tests/` — cross-module tests.

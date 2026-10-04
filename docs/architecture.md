@@ -59,8 +59,9 @@ apps/
   worker/   BullMQ workers — ingestion jobs, market-data polling jobs
   web/      React SPA — routes, components, TanStack Query hooks
 packages/
-  db/       Drizzle schema, migrations, shared DB client (imported by api + worker)
-  shared/   Shared TS types (Transaction, Account, Holding, Asset, ...) (imported by api + worker + web)
+  db/              Drizzle schema, migrations, shared DB client (imported by api + worker)
+  shared/          Shared TS types (Transaction, Account, Holding, Asset, ...) (imported by api + worker + web)
+  categorization/  Pure rule-matching logic (cleanDescription, matchRule), no DB/HTTP (imported by api, will be by worker)
 infra/      Terraform for the Azure deployment
 fixtures/   Synthetic market-data/exchange-rate inputs used by adapter stubs and tests
 tests/      Cross-module tests
@@ -102,8 +103,8 @@ per-request via the analytics endpoints' `currency` query param.
 | ------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Accounts           | `/accounts`                                                                  | CRUD for linked/manual accounts.                                                                                                                                                                        |
 | Transactions       | `/transactions`, `/transactions/:id/tags`                                    | List/filter/edit ledger entries; category overrides; attach/detach tags.                                                                                                                                |
-| Tags               | `/tags`                                                                      | CRUD for user-defined transaction tags.                                                                                                                                                                 |
-| Categories & rules | `/categories`, `/rules`                                                      | Manage categories and categorization rules.                                                                                                                                                             |
+| Tags               | `/tags`                                                                      | Create/list/delete for user-defined transaction tags (no rename — renaming would retroactively relabel every tagged transaction).                                                                       |
+| Categories & rules | `/categories`, `/rules`                                                      | Create/list/delete for categories (same no-rename rule as tags); full CRUD for categorization rules.                                                                                                    |
 | Holdings           | `/holdings`                                                                  | Investment positions per account.                                                                                                                                                                       |
 | Assets             | `/assets`, `/assets/:id/value-log`                                           | Manual non-liquid assets/liabilities and their value-adjustment history.                                                                                                                                |
 | Imports            | `/imports/csv/preview`, `/imports/csv/commit`                                | Two-step, synchronous upload: `preview` parses the file and returns detected columns and sample rows; `commit` takes the file plus a user-supplied column mapping and writes rows tagged `source: csv`. |
@@ -128,8 +129,17 @@ user-configurable rather than fixed, since bank export formats vary.
 
 **Ledger & rules engine.** Runs in `apps/api` against incoming transactions (from either
 ingestion path): cleans descriptions, matches rules, and assigns categories. When a `Rule` is
-created or edited, `apps/api` also re-applies it as a backfill pass over existing transactions,
-not just new ones. Rules are stored data, not hardcoded logic, so they're user-editable.
+created or edited, `apps/api` also re-applies it as a backfill pass — but **only over transactions
+eligible for auto-categorization** (`categoryId IS NULL AND categoryIsManual = false`). A category,
+once assigned — by a rule, or by the user via `PATCH /transactions/:id` (setting _or_ clearing it)
+— is a ledger entry: it never gets silently cleared or reassigned by a later rule change or a
+rule's deletion. `categoryIsManual` is what makes a user's explicit clear (`categoryId: null`)
+stick — without it, a cleared transaction would look identical to a never-categorized one and could
+be silently re-filled by the next rule write. The only way to change an already-categorized (or
+explicitly-cleared) transaction is the user acting on it directly via `PATCH /transactions/:id`.
+Rules are stored data, not hardcoded logic, so they're user-editable. `Transaction.amount` is
+**signed** (expenses negative, income positive) — an `amount`-matching `Rule.pattern` must match
+that sign, e.g. `-12.50` for a 12.50 expense, not `12.50`.
 
 **Net worth & asset tracking.** Two independent value sources feed net worth: a repeatable BullMQ
 job in `apps/worker` polls `MarketDataAdapter` on an interval for `Holding` prices (caches in
