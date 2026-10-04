@@ -12,6 +12,7 @@ import { requireAuth } from './auth/middleware.js';
 import { authRouter } from './auth/router.js';
 import { categoriesRouter } from './categories/router.js';
 import { holdingsRouter } from './holdings/router.js';
+import { importsRouter } from './imports/router.js';
 import { errorHandler } from './lib/error-handler.js';
 import { rulesRouter } from './rules/router.js';
 import { tagsRouter } from './tags/router.js';
@@ -66,6 +67,7 @@ app.use('/holdings', holdingsRouter);
 app.use('/assets', assetsRouter);
 app.use('/tags', tagsRouter);
 app.use('/transactions', transactionsRouter);
+app.use('/imports', importsRouter);
 
 app.use(errorHandler);
 
